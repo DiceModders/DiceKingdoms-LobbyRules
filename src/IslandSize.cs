@@ -92,6 +92,7 @@ internal static class IslandSize
         // the camera asks for positions every frame: this postfix is only in the game during a match with bigger islands
         _positionPatch = patcher.Switch(typeof(Camera), nameof(Camera.Position), typeof(IslandSize), postfix: nameof(PositionPostfix));
         Core.Match.Started += WidenCamera;
+        Core.Match.Rejoined += WidenCamera;   // a rejoined player may not get Started; WidenCamera can run twice
         Core.Match.Reset += Restore;   // GameState.FullReset: quit, disconnect, joining another lobby
         Core.Match.Ended += Restore;
     }
@@ -380,7 +381,9 @@ internal static class IslandSize
             if (_prefab != null) Apply(_prefab, "island prefab restored");   // rules are no longer fixed here: the game's values
             _side = 0;
             _normalFocus = 0;
+            _asking = false;                                        // the dialog may have been closed by a scene change without a callback
             if (_positionPatch != null) _positionPatch.On = false;
+            if (_fishPatch != null) _fishPatch.On = false;          // normally off after SpawnIslands; stays on only if spawning threw
             if (_camera != null && _gameBound != 0) _camera.baseHorizontalBound = _gameBound;
             RestoreSea();
             RestoreUi();
