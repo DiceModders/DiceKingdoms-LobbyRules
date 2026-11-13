@@ -58,6 +58,7 @@ internal static class IslandSize
 
     private static Camera _camera;
     private static float _gameBound;
+    private static float _gameMinHeight;   // CameraMovement.minHeight (4): raised on big grids so tall models cannot reach the pushed-out HUD
     private static bool _inPosition;
     private static PatchSwitch _positionPatch;
 
@@ -91,6 +92,8 @@ internal static class IslandSize
         patcher.Patch(typeof(GameGrid), nameof(GameGrid.Awake), typeof(IslandSize), prefix: nameof(AwakePrefix), postfix: nameof(AwakePostfix));
         // the camera asks for positions every frame: this postfix is only in the game during a match with bigger islands
         _positionPatch = patcher.Switch(typeof(Camera), nameof(Camera.Position), typeof(IslandSize), postfix: nameof(PositionPostfix));
+        // the harvest dice: on while the HUD is pushed out (see DicePostfix)
+        _dicePatch = patcher.Switch(typeof(DiceKingdoms.Interface.HarvestInterface), "CreateDices", typeof(IslandSize), postfix: nameof(DicePostfix));
         Core.Match.Started += WidenCamera;
         Core.Match.Rejoined += WidenCamera;   // a rejoined player may not get Started; WidenCamera can run twice
         Core.Match.Reset += Restore;   // GameState.FullReset: quit, disconnect, joining another lobby
@@ -274,7 +277,11 @@ internal static class IslandSize
             _camera.baseHorizontalBound = _gameBound * scale;
             Plugin.L.LogInfo($"[island] camera panning area x{scale:0.##}");
             if (_widenSea.Value) WidenSea(scale);
-            PushUi(scale);
+            float hud = PushUi(scale);
+            // the HUD now sits up to ~3.5 units in front of the camera (201): at the game's lowest height (4) the castle and hills reached into it
+            if (_gameMinHeight == 0) _gameMinHeight = _camera.minHeight;
+            _camera.minHeight = Math.Max(_gameMinHeight, _gameMinHeight + hud * 1.5f);
+            Plugin.L.LogInfo($"[island] lowest camera height {_camera.minHeight:0.0} (game {_gameMinHeight:0.0})");
         }
         catch (Exception e) { Plugin.L.LogWarning("[island] camera: " + e.Message); }
     }
@@ -312,21 +319,25 @@ internal static class IslandSize
         }
     }
 
-    // Screen Space - Camera canvases (game HUD, UiKit layers) whose plane distance was pushed out for this match
-    private static readonly System.Collections.Generic.List<(UnityEngine.Canvas c, float distance)> _ui = new();
+    // Screen Space - Camera canvases (game HUD, UiKit layers) changed for this match: their render mode, camera and distance before
+    private static readonly System.Collections.Generic.List<(UnityEngine.Canvas c, UnityEngine.RenderMode mode, UnityEngine.Camera camera, float distance)> _ui = new();
 
     /// <summary>
     /// The game's HUD and UiKit's windows are Screen Space - Camera canvases 0.11 .. 10 units in front of the camera. At 0.11 one screen pixel is
     /// ~0.00008 world units, finer than a float can place a vertex once the camera is a few thousand units from the map centre (big grids put the
-    /// islands that far out): every vertex snaps on its own and the windows shimmer while the camera moves. All of them move out by the grid scale
-    /// (order kept), so a pixel is again several float steps wide; restored after the match. Only the canvases' distance changes, not their look.
+    /// islands that far out): every vertex snaps on its own and the windows shimmer while the camera moves. They move further out, in the same
+    /// order; restored after the match. They must stay in camera space: the game stacks its HUD by distance ("Canvas Background", the 3D harvest
+    /// dice, "Canvas Over Dice"); as screen overlays the dice disappeared, the harvest panel asserted every frame and the scoreboard went behind the
+    /// grey background.
     /// </summary>
-    private static void PushUi(float scale)
+    private static float PushUi(float scale)
     {
         RestoreUi();
-        // the HUD canvases sit at 0.11 .. 1.1, UiKit's Behind layer at ~10 (behind them). Front ones go out by 6 x the grid scale (tested at 201:
-        // x4 and x12 still left some edges snapping, nothing hidden by terrain); the far ones only as far as needed to stay behind the front ones.
-        float k = 6f * scale, front = 0f;
+        // What stops the shimmer is the NEAREST distance: 0.11 x 6 x the grid scale (tested at 201: x4 and x12 still left some edges snapping). The
+        // others only have to stay behind it in the same order, so they are packed just behind it (up to 30 % further) instead of being multiplied
+        // too: multiplied, the farthest went to ~27 units and the island hid the HUD when the camera zoomed in close. The far ones (UiKit's Behind
+        // layer, ~10) only move if they would end up in front of the HUD.
+        var front = new System.Collections.Generic.List<UnityEngine.Canvas>();
         var far = new System.Collections.Generic.List<UnityEngine.Canvas>();
         // hidden windows too (the history panel is inactive when the match starts); scene objects only, not prefabs
         foreach (var c in UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.Canvas>())
@@ -334,18 +345,62 @@ internal static class IslandSize
             if (c == null || !c.gameObject.scene.IsValid() || c.renderMode != UnityEngine.RenderMode.ScreenSpaceCamera) continue;
             var parent = c.transform.parent;    // isRootCanvas is not kept up to date on inactive canvases
             if (parent != null && parent.GetComponentInParent<UnityEngine.Canvas>(true) != null) continue;
-            _ui.Add((c, c.planeDistance));
-            if (c.planeDistance >= 2f) { far.Add(c); continue; }
-            c.planeDistance *= k;
-            front = Math.Max(front, c.planeDistance);
+            _ui.Add((c, c.renderMode, c.worldCamera, c.planeDistance));
+            (c.planeDistance >= 2f ? far : front).Add(c);
         }
-        foreach (var c in far) c.planeDistance = Math.Max(c.planeDistance, front * 1.25f);
-        Plugin.L.LogInfo($"[island] {_ui.Count} camera-space UI canvases moved away from the camera (front x{k:0.#}, farthest {front * 1.25f:0.#})");
+        float lo = float.MaxValue, hi = 0f;
+        foreach (var c in front) { lo = Math.Min(lo, c.planeDistance); hi = Math.Max(hi, c.planeDistance); }
+        float nearest = Math.Max(0.11f, lo == float.MaxValue ? 0.11f : lo) * 6f * scale, farthest = nearest;
+        _mapLo = lo == float.MaxValue ? 0.11f : lo; _mapHi = hi > _mapLo ? hi : _mapLo + 1f; _mapNear = nearest;
+        foreach (var c in front)
+        {
+            float t = hi > lo ? (c.planeDistance - lo) / (hi - lo) : 0f;   // order kept
+            c.planeDistance = nearest * (1f + 0.3f * t);
+            farthest = Math.Max(farthest, c.planeDistance);
+        }
+        foreach (var c in far) c.planeDistance = Math.Max(c.planeDistance, farthest * 1.25f);
+        Plugin.L.LogInfo($"[island] {_ui.Count} camera-space UI canvases moved away from the camera ({nearest:0.0} .. {farthest:0.0} units)");
+        if (_dicePatch != null) _dicePatch.On = front.Count > 0;
+        return farthest;
+    }
+
+    // the distance map PushUi used for this match: old distance -> new distance (order kept)
+    private static float _mapLo, _mapHi, _mapNear;
+    private static PatchSwitch _dicePatch;
+    private static readonly System.Collections.Generic.Dictionary<IntPtr, UnityEngine.Vector3> _diceScale = new();
+    private static float MapDistance(float d) => _mapNear * (1f + 0.3f * (d - _mapLo) / (_mapHi - _mapLo));
+
+    /// <summary>
+    /// The harvest dice are 3D models in a holder in front of the camera; CreateDices puts the holder at a depth from the number of dice, which in
+    /// the game lands between "Canvas Background" and "Canvas Over Dice". With those canvases pushed out the dice stayed near and drew over every
+    /// window (the rules window, the scoreboard). The holder is moved with the same map as the canvases and scaled by the same factor, so the dice
+    /// keep their size and place on screen (perspective) and sit between the same canvases as in the game.
+    /// </summary>
+    internal static void DicePostfix(DiceKingdoms.Interface.HarvestInterface __instance)
+    {
+        try
+        {
+            var holder = __instance != null ? __instance.dicesHolder : null;
+            if (holder == null || _mapNear <= 0f) return;
+            if (!_diceScale.TryGetValue(holder.Pointer, out var baseScale)) _diceScale[holder.Pointer] = baseScale = holder.localScale;
+            var pos = holder.localPosition;
+            if (pos.z <= 0f) return;
+            float k = MapDistance(pos.z) / pos.z;
+            holder.localPosition = new UnityEngine.Vector3(pos.x * k, pos.y * k, pos.z * k);
+            holder.localScale = new UnityEngine.Vector3(baseScale.x * k, baseScale.y * k, baseScale.z * k);
+        }
+        catch (Exception e) { Plugin.L.LogWarning("[island] dice depth: " + e.Message); }
     }
 
     private static void RestoreUi()
     {
-        foreach (var (c, distance) in _ui) if (c != null) c.planeDistance = distance;
+        foreach (var (c, mode, camera, distance) in _ui)
+        {
+            if (c == null) continue;
+            c.renderMode = mode;
+            c.worldCamera = camera;
+            c.planeDistance = distance;
+        }
         _ui.Clear();
     }
 
@@ -383,8 +438,14 @@ internal static class IslandSize
             _normalFocus = 0;
             _asking = false;                                        // the dialog may have been closed by a scene change without a callback
             if (_positionPatch != null) _positionPatch.On = false;
+            if (_dicePatch != null) _dicePatch.On = false;
+            _mapNear = 0f;
+            foreach (var h in UnityEngine.Resources.FindObjectsOfTypeAll<DiceKingdoms.Interface.HarvestInterface>())   // dice back to the game's scale
+                if (h != null && h.dicesHolder != null && _diceScale.TryGetValue(h.dicesHolder.Pointer, out var s0)) h.dicesHolder.localScale = s0;
+            _diceScale.Clear();
             if (_fishPatch != null) _fishPatch.On = false;          // normally off after SpawnIslands; stays on only if spawning threw
             if (_camera != null && _gameBound != 0) _camera.baseHorizontalBound = _gameBound;
+            if (_camera != null && _gameMinHeight != 0) _camera.minHeight = _gameMinHeight;
             RestoreSea();
             RestoreUi();
         }
