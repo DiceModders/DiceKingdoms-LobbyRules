@@ -230,6 +230,7 @@ internal static class IslandSize
         var size = side == _gameSize.x ? _gameSize : new int2(side, side);
         int radius = Math.Clamp((int)Math.Round(_gameRadius * (float)side / _gameSize.x * percent / 100f), 1, side / 2);
         _side = on ? side : 0;
+        CombatPathLimit.Set(side, _gameSize.x);   // soldiers' path search grows with the island (see CombatPathLimit)
 
         float length = (float)radius / _gameRadius, area = length * length;
         var p = _game;
@@ -435,6 +436,7 @@ internal static class IslandSize
         {
             if (_prefab != null) Apply(_prefab, "island prefab restored");   // rules are no longer fixed here: the game's values
             _side = 0;
+            CombatPathLimit.Reset();
             _normalFocus = 0;
             _asking = false;                                        // the dialog may have been closed by a scene change without a callback
             if (_positionPatch != null) _positionPatch.On = false;
