@@ -109,9 +109,9 @@ internal static class IslandSize
     private static void OnGridChanged(int value)
     {
         if (value <= NormalMax || _extendedOk || _asking || !_grid.Editable) return;
-        string text = $"Island grid {value} is in the experimental range ({NormalMax + 2} .. {MaxGrid}).\n\n" +
-                      "Expect a long freeze while the islands are built and slower computer turns, and every player's PC needs to keep up. " +
-                      "Use it?";
+        string text = Tx.T("islands.experimental", value, NormalMax + 2, MaxGrid) +
+                      "" +
+                      "";
         _asking = true;
         bool shown = _scope != null && _scope.Native.Dialogs.Confirm(text,
             () => { _asking = false; _extendedOk = true; },

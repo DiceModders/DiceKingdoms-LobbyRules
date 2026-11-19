@@ -20,8 +20,8 @@ using GameUnitType = DiceKingdoms.Game.Unit.Type;
 /// </summary>
 internal static class ValuesWindow
 {
-    private static readonly string[] BuiltInCivs = { "Europe", "Middle East", "Viking", "Ancient", "Maya" };
-    private static readonly string[] TabNames = { "Units", "Buildings", "Technologies" };
+    private static string[] BuiltInCivs => new[] { Core.Texts.Game("civilization.EUROPE.name", Tx.T("civ.0")), Core.Texts.Game("civilization.MIDDLE_EAST.name", Tx.T("civ.1")), Core.Texts.Game("civilization.VIKING.name", Tx.T("civ.2")), Core.Texts.Game("civilization.ANCIENT.name", Tx.T("civ.3")), Core.Texts.Game("civilization.MAYA.name", Tx.T("civ.4")) };   // the game's own names
+    private static string[] TabNames => new[] { Tx.T("values.tab.units"), Tx.T("values.tab.buildings"), Tx.T("values.tab.technologies") };
     private static readonly Color Changed = new(1f, 0.82f, 0.45f, 1f);
     private static readonly Color Normal = new(0.97f, 0.94f, 0.89f, 1f);
 
@@ -40,13 +40,13 @@ internal static class ValuesWindow
         _ui = ui;
         GameValues.Changed += Refresh;
         Core.Lobby.Changed += Refresh;   // the host can change, a match can start: who may edit changes with it
-        ui?.Native.Settings.AddBlock(new SettingsBlockSpec
+        Tx.Block(ui, () => new SettingsBlockSpec
         {
             Id = Plugin.Guid + ".lobby",
             Page = SettingsPage.Lobby,
-            Title = "Lobby Rules",
+            Title = Tx.T("values.block"),
             Order = 30,
-            Build = block => block.AddButton("Game values", "Open", Toggle),
+            Build = block => block.AddButton(Tx.T("values.title"), Tx.T("common.open"), Toggle),
         });
     }
 
@@ -56,7 +56,7 @@ internal static class ValuesWindow
     {
         _win = _ui?.Custom.Window(w =>
         {
-            w.Title("Game values").Size(760f, 800f).Position(80f, 40f).Draggable().Closable().Fullscreenable().FullscreenButton();
+            w.Title(Tx.T("values.title")).Size(760f, 800f).Position(80f, 40f).Draggable().Closable().Fullscreenable().FullscreenButton();
             w.OnClose(() => { _win = null; _scroll = null; _status = null; Tabs.Clear(); Refreshers.Clear(); EditButtons.Clear(); });
             w.Body.Spacing(6f);
             w.Body.Row(r =>
@@ -67,7 +67,7 @@ internal static class ValuesWindow
                     var b = r.Button(TabNames[i], () => { _tab = tab; _open = null; Rebuild(); })?.FillWidth();
                     if (b != null) Tabs.Add(b);
                 }
-                var reset = r.Button("Reset all", () => GameValues.ResetAll())?.FillWidth();
+                var reset = r.Button(Tx.T("values.resetAll"), () => GameValues.ResetAll())?.FillWidth();
                 if (reset != null) EditButtons.Add(reset);
             })?.Height(36f);
             _status = w.Body.Text("");
@@ -102,9 +102,9 @@ internal static class ValuesWindow
 
     private static void BuildUnits(UiContainer c)
     {
-        var civs = new List<(int id, string name)> { (-1, "Every civilization") };
+        var civs = new List<(int id, string name)> { (-1, Tx.T("values.everyCiv")) };
         for (int i = 0; i < BuiltInCivs.Length; i++) civs.Add((i, BuiltInCivs[i]));
-        foreach (var m in Core.Civilizations.All) civs.Add((m.Id, m.Name));
+        foreach (var m in Core.Civilizations.All) civs.Add((m.Id, m.DisplayName));
         foreach (var (civ, name) in civs)
         {
             Section(c, "civ:" + civ, name, s =>
@@ -112,7 +112,7 @@ internal static class ValuesWindow
                 for (int unit = 0; unit < 10; unit++)
                 {
                     int u = unit;
-                    s.Text(Nice(((GameUnitType)u).ToString()))?.Size(20f).Color(Changed);
+                    s.Text(Core.Texts.Game("unit." + (GameUnitType)u + ".name", Nice(((GameUnitType)u).ToString())))?.Size(20f).Color(Changed);
                     foreach (var stat in GameValues.UnitStats)
                     {
                         if ((stat == "Range" || stat == "MissChance") && !GameValues.IsRanged(u)) continue;
@@ -121,7 +121,7 @@ internal static class ValuesWindow
                         string key = $"u.{(number == -1 && civ >= 0 ? civ : number)}.{u}.{stat}";
                         string all = $"u.-1.{u}.{stat}";
                         int Base() => civ >= 0 ? GameValues.Get(all) ?? GameValues.UnitBase(civ, u, stat) : GameValues.UnitBase(-1, u, stat);
-                        Stepper(s, Nice(stat) + (pct ? " %" : ""), key, Base, pct ? 5 : 1, 0, pct ? 100 : 99);
+                        Stepper(s, Tx.T("stat." + stat) + (pct ? " %" : ""), key, Base, pct ? 5 : 1, 0, pct ? 100 : 99);
                     }
                 }
             });
@@ -133,21 +133,21 @@ internal static class ValuesWindow
         foreach (GameBuildingTypeName b in Enum.GetValues(typeof(GameBuildingTypeName)))
         {
             var building = b;
-            Section(c, "b:" + (int)b, Nice(b.ToString()), s =>
+            Section(c, "b:" + (int)b, Core.Texts.Game("building." + b + ".name", Nice(b.ToString())), s =>
             {
                 var d = Core.Balance.DefaultBuilding(building);
-                if (d == null) { s.Text("This building's values are not loaded yet (open the window again in the lobby)."); return; }
+                if (d == null) { s.Text(Tx.T("values.buildingNotLoaded")); return; }
                 string prefix = "b." + (int)building + ".";
-                Stepper(s, "Health", prefix + "Health", () => d.Health, 1, 1, 999);
+                Stepper(s, Tx.T("values.health"), prefix + "Health", () => d.Health, 1, 1, 999);
                 if (d.IsTower)
                 {
-                    Stepper(s, "Tower range", prefix + "TowerRange", () => d.TowerRange, 1, 1, 99);
-                    Stepper(s, "Tower period", prefix + "TowerPeriod", () => d.TowerPeriod, 1, 1, 999);
+                    Stepper(s, Tx.T("values.towerRange"), prefix + "TowerRange", () => d.TowerRange, 1, 1, 99);
+                    Stepper(s, Tx.T("values.towerPeriod"), prefix + "TowerPeriod", () => d.TowerPeriod, 1, 1, 999);
                 }
                 foreach (var r in GameValues.Resources)
                 {
                     string res = r;
-                    Stepper(s, "Cost: " + res, prefix + res, () => GameValues.Resource(d.Cost, res), 1, 0, 99);
+                    Stepper(s, Tx.T("values.cost", Tx.T("res." + res)), prefix + res, () => GameValues.Resource(d.Cost, res), 1, 0, 99);
                 }
             });
         }
@@ -158,14 +158,14 @@ internal static class ValuesWindow
         foreach (GameTechnologyName t in Enum.GetValues(typeof(GameTechnologyName)))
         {
             var tech = t;
-            Section(c, "t:" + (int)t, Nice(t.ToString()), s =>
+            Section(c, "t:" + (int)t, Core.Texts.Game("technology." + t + ".name", Nice(t.ToString())), s =>
             {
                 var d = Core.Balance.DefaultTechnologyCost(tech);
-                if (d == null) { s.Text("This technology's cost is not loaded yet (open the window again in the lobby)."); return; }
+                if (d == null) { s.Text(Tx.T("values.techNotLoaded")); return; }
                 foreach (var r in GameValues.Resources)
                 {
                     string res = r;
-                    Stepper(s, "Cost: " + res, "t." + (int)tech + "." + res, () => GameValues.Resource(d, res), 1, 0, 99);
+                    Stepper(s, Tx.T("values.cost", Tx.T("res." + res)), "t." + (int)tech + "." + res, () => GameValues.Resource(d, res), 1, 0, 99);
                 }
             });
         }
@@ -191,7 +191,7 @@ internal static class ValuesWindow
             var minus = r.Button("-", () => Step(key, baseValue, -step, min, max))?.FixedW(36f);
             value = r.Text("")?.FixedW(140f);
             var plus = r.Button("+", () => Step(key, baseValue, step, min, max))?.FixedW(36f);
-            var game = r.Button("Game", () => GameValues.Set(key, null))?.FixedW(70f);
+            var game = r.Button(Tx.T("values.game"), () => GameValues.Set(key, null))?.FixedW(70f);
             foreach (var b in new[] { minus, plus, game }) if (b != null) EditButtons.Add(b);
         })?.Height(30f);
         Refreshers.Add(() =>
@@ -199,7 +199,7 @@ internal static class ValuesWindow
             if (value == null) return;
             int b = baseValue();
             int? v = GameValues.Get(key);
-            value.Value = v == null ? b.ToString(CultureInfo.InvariantCulture) : v.Value + "   (was " + b + ")";
+            value.Value = v == null ? b.ToString(CultureInfo.InvariantCulture) : Tx.T("values.was", v.Value, b);
             value.Color(v == null ? Normal : Changed);
         });
     }
@@ -208,7 +208,7 @@ internal static class ValuesWindow
     {
         int b = baseValue();
         int next = Math.Clamp((GameValues.Get(key) ?? b) + delta, min, max);
-        if (!GameValues.Set(key, next == b ? null : next)) Status("Only the host can change values, before the match starts.");
+        if (!GameValues.Set(key, next == b ? null : next)) Status(Tx.T("values.hostOnly"));
     }
 
     // ---- refreshing ----------------------------------------------------------------------------------------------------------------
@@ -219,9 +219,9 @@ internal static class ValuesWindow
         foreach (var r in Refreshers) r();
         bool edit = GameValues.Editable;
         foreach (var b in EditButtons) b?.Interactable(edit);
-        Status((edit ? "You are the host: changes reach every player. " : "The host's values (read only). ") +
-               (GameValues.Count == 0 ? "Nothing is changed." : GameValues.Count + " value(s) changed.") +
-               " They are used only when every player has this mod.");
+        Status((edit ? Tx.T("values.host") : Tx.T("values.readonly")) + " " +
+               (GameValues.Count == 0 ? Tx.T("values.none") : Tx.T("values.changed", GameValues.Count)) +
+               " " + Tx.T("values.onlyAll"));
     }
 
     private static void Status(string text) { if (_status != null) _status.Value = text; }

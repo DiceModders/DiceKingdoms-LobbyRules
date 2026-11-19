@@ -27,6 +27,7 @@ public sealed class Plugin : BasePlugin
 
     public override void Load()
     {
+        Tx.Load();                                   // texts.json in the game's language (ModCore)
         L = Log;
         var patcher = new Patcher(Guid, Log);
         var ui = DiceModders.UiKit.UiKit.CreateScope(Guid);
